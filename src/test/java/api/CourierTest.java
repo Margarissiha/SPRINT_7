@@ -21,7 +21,7 @@ public class CourierTest {
     private String courierId;
 
     @Before
-    @Step("Подготовка тестовых данных и создание курьера")
+    @Step("Подготовка тестовых данных")
     public void setUp() {
         courierClient = new CourierClient();
         courier = new Courier(
@@ -29,15 +29,6 @@ public class CourierTest {
                 RandomUtils.generateRandomPassword(),
                 RandomUtils.generateRandomFirstName()
         );
-
-        // Создаем курьера перед каждым тестом
-        Response createResponse = courierClient.createCourier(courier);
-        createResponse.then()
-                .assertThat()
-                .statusCode(SC_CREATED)
-                .body("ok", equalTo(true));
-
-        waitForServer(1500);
     }
 
     @After
@@ -45,7 +36,6 @@ public class CourierTest {
     public void tearDown() {
         if (courierId != null && !courierId.isEmpty()) {
             try {
-                waitForServer(2000);
                 courierClient.deleteCourier(courierId);
                 System.out.println("Курьер с ID " + courierId + " удален.");
             } catch (Exception e) {
@@ -54,36 +44,122 @@ public class CourierTest {
         }
     }
 
-    private String getCourierId() {
-        if (courierId == null) {
-            CourierCredentials credentials = new CourierCredentials(
-                    courier.getLogin(),
-                    courier.getPassword()
-            );
-            Response loginResponse = courierClient.loginCourier(credentials);
-            courierId = loginResponse.jsonPath().getString("id");
-        }
-        return courierId;
+    // Тесты для создания курьера
+    @Test
+    @DisplayName("Курьера можно создать")
+    @Description("Проверка успешного создания курьера с валидными данными")
+    public void courierCanBeCreated() {
+        Response createResponse = courierClient.createCourier(courier);
+        createResponse.then()
+                .assertThat()
+                .statusCode(SC_CREATED)
+                .body("ok", equalTo(true));
+
+        // Получаем ID созданного курьера для удаления
+        CourierCredentials credentials = new CourierCredentials(courier.getLogin(), courier.getPassword());
+        Response loginResponse = courierClient.loginCourier(credentials);
+        courierId = loginResponse.jsonPath().getString("id");
     }
 
-    private void waitForServer(int milliseconds) {
-        try {
-            Thread.sleep(milliseconds);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+    @Test
+    @DisplayName("Нельзя создать двух одинаковых курьеров")
+    @Description("Проверка ошибки при создании курьера с существующим логином")
+    public void cannotCreateDuplicateCourier() {
+        // Создаем первого курьера
+        Response firstCreateResponse = courierClient.createCourier(courier);
+        firstCreateResponse.then()
+                .assertThat()
+                .statusCode(SC_CREATED)
+                .body("ok", equalTo(true));
+
+        // Получаем ID для удаления
+        CourierCredentials credentials = new CourierCredentials(courier.getLogin(), courier.getPassword());
+        Response loginResponse = courierClient.loginCourier(credentials);
+        courierId = loginResponse.jsonPath().getString("id");
+
+        // Пытаемся создать курьера с тем же логином
+        Response secondCreateResponse = courierClient.createCourier(courier);
+        secondCreateResponse.then()
+                .assertThat()
+                .statusCode(SC_CONFLICT)
+                .body("message", equalTo("Этот логин уже используется. Попробуйте другой."));
     }
 
-    private void waitForServer() {
-        waitForServer(1500);
+    @Test
+    @DisplayName("Успешный запрос возвращает ok: true")
+    @Description("Проверка, что при успешном создании курьера возвращается ok: true")
+    public void createCourierReturnsOkTrue() {
+        Response createResponse = courierClient.createCourier(courier);
+        createResponse.then()
+                .assertThat()
+                .statusCode(SC_CREATED)
+                .body("ok", equalTo(true));
+
+        // Получаем ID созданного курьера для удаления
+        CourierCredentials credentials = new CourierCredentials(courier.getLogin(), courier.getPassword());
+        Response loginResponse = courierClient.loginCourier(credentials);
+        courierId = loginResponse.jsonPath().getString("id");
     }
 
+    @Test
+    @DisplayName("Если одного из полей нет, запрос возвращает ошибку")
+    @Description("Проверка ошибки при создании курьера без обязательного поля")
+    public void createCourierFailsWhenFieldMissing() {
+        // Создаем курьера без логина
+        Courier courierWithoutLogin = new Courier(
+                null,
+                courier.getPassword(),
+                courier.getFirstName()
+        );
+
+        Response response = courierClient.createCourier(courierWithoutLogin);
+        response.then()
+                .assertThat()
+                .statusCode(SC_BAD_REQUEST)
+                .body("message", equalTo("Недостаточно данных для создания учетной записи"));
+    }
+
+    @Test
+    @DisplayName("Если создать пользователя с логином, который уже есть, возвращается ошибка")
+    @Description("Проверка ошибки при создании курьера с существующим логином")
+    public void createCourierFailsWithDuplicateLogin() {
+        // Создаем первого курьера
+        Response firstCreateResponse = courierClient.createCourier(courier);
+        firstCreateResponse.then()
+                .assertThat()
+                .statusCode(SC_CREATED);
+
+        // Получаем ID первого курьера для удаления
+        CourierCredentials credentials = new CourierCredentials(courier.getLogin(), courier.getPassword());
+        Response loginResponse = courierClient.loginCourier(credentials);
+        courierId = loginResponse.jsonPath().getString("id");
+
+        // Пытаемся создать второго курьера с тем же логином, но другим именем
+        Courier duplicateCourier = new Courier(
+                courier.getLogin(),
+                RandomUtils.generateRandomPassword(),
+                RandomUtils.generateRandomFirstName()
+        );
+
+        Response secondCreateResponse = courierClient.createCourier(duplicateCourier);
+        secondCreateResponse.then()
+                .assertThat()
+                .statusCode(SC_CONFLICT)
+                .body("message", equalTo("Этот логин уже используется. Попробуйте другой."));
+    }
+
+    // Тесты для авторизации
     @Test
     @DisplayName("Курьер может авторизоваться")
     @Description("Проверка успешной авторизации курьера с валидными данными")
     public void courierCanLoginSuccessfully() {
-        // Курьер уже создан в @Before, удаляем создание отсюда
+        // Сначала создаем курьера
+        Response createResponse = courierClient.createCourier(courier);
+        createResponse.then()
+                .assertThat()
+                .statusCode(SC_CREATED);
 
+        // Затем авторизуемся
         CourierCredentials credentials = new CourierCredentials(
                 courier.getLogin(),
                 courier.getPassword()
@@ -93,7 +169,8 @@ public class CourierTest {
         loginResponse.then()
                 .assertThat()
                 .statusCode(SC_OK)
-                .body("id", notNullValue());
+                .body("id", notNullValue())
+                .body("id", greaterThan(0));
 
         courierId = loginResponse.jsonPath().getString("id");
         System.out.println("Успешная авторизация. ID курьера: " + courierId);
@@ -103,8 +180,18 @@ public class CourierTest {
     @DisplayName("Нельзя авторизоваться с неправильным паролем")
     @Description("Проверка ошибки при авторизации с неправильным паролем")
     public void cannotLoginWithWrongPassword() {
-        // Курьер уже создан в @Before
+        // Создаем курьера
+        Response createResponse = courierClient.createCourier(courier);
+        createResponse.then()
+                .assertThat()
+                .statusCode(SC_CREATED);
 
+        // Получаем ID для удаления
+        CourierCredentials validCredentials = new CourierCredentials(courier.getLogin(), courier.getPassword());
+        Response loginResponse = courierClient.loginCourier(validCredentials);
+        courierId = loginResponse.jsonPath().getString("id");
+
+        // Пытаемся авторизоваться с неправильным паролем
         CourierCredentials wrongCredentials = new CourierCredentials(
                 courier.getLogin(),
                 "wrong_password"
@@ -114,8 +201,6 @@ public class CourierTest {
                 .assertThat()
                 .statusCode(SC_NOT_FOUND)
                 .body("message", equalTo("Учетная запись не найдена"));
-
-        courierId = getCourierId();
     }
 
     @Test
@@ -130,7 +215,7 @@ public class CourierTest {
         response.then()
                 .assertThat()
                 .statusCode(SC_BAD_REQUEST)
-                .body("message", equalTo("Недостаточно данных для входа")); // Добавлена проверка сообщения
+                .body("message", equalTo("Недостаточно данных для входа"));
     }
 
     @Test
@@ -152,8 +237,18 @@ public class CourierTest {
     @DisplayName("Система вернёт ошибку, если неправильно указать логин")
     @Description("Проверка ошибки при авторизации с неправильным логином")
     public void loginFailsWithIncorrectLogin() {
-        courierId = getCourierId();
+        // Создаем курьера
+        Response createResponse = courierClient.createCourier(courier);
+        createResponse.then()
+                .assertThat()
+                .statusCode(SC_CREATED);
 
+        // Получаем ID для удаления
+        CourierCredentials validCredentials = new CourierCredentials(courier.getLogin(), courier.getPassword());
+        Response loginResponse = courierClient.loginCourier(validCredentials);
+        courierId = loginResponse.jsonPath().getString("id");
+
+        // Пытаемся авторизоваться с неправильным логином
         CourierCredentials wrongCredentials = new CourierCredentials(
                 "incorrect_" + courier.getLogin(),
                 courier.getPassword()
@@ -174,7 +269,7 @@ public class CourierTest {
         response.then()
                 .assertThat()
                 .statusCode(SC_BAD_REQUEST)
-                .body("message", equalTo("Недостаточно данных для входа")); // Добавлена проверка сообщения
+                .body("message", equalTo("Недостаточно данных для входа"));
     }
 
     @Test
@@ -190,28 +285,5 @@ public class CourierTest {
                 .assertThat()
                 .statusCode(SC_NOT_FOUND)
                 .body("message", equalTo("Учетная запись не найдена"));
-    }
-
-    @Test
-    @DisplayName("Успешный запрос возвращает id")
-    @Description("Проверка, что успешная авторизация возвращает id курьера")
-    public void successfulLoginReturnsId() {
-        // Курьер уже создан в @Before
-
-        CourierCredentials credentials = new CourierCredentials(
-                courier.getLogin(),
-                courier.getPassword()
-        );
-        Response loginResponse = courierClient.loginCourier(credentials);
-
-        loginResponse.then()
-                .assertThat()
-                .statusCode(SC_OK)
-                .body("id", notNullValue())
-                .body("id", greaterThan(0));
-
-        Integer id = loginResponse.jsonPath().getInt("id");
-        courierId = String.valueOf(id);
-        System.out.println("Полученный ID курьера: " + id);
     }
 }
